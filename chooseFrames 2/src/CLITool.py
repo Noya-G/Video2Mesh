@@ -1,24 +1,120 @@
 import imghdr
 import os
 import shutil
+import subprocess
 import sys
+
+import trimesh
 import signal
-from PIL import Image
-import keyboard
+
 import pyfiglet
 from colorama import Fore, init
 
 # from src.CLI import welcome_message, cli_message, exit_flags, help_flags, help_message, error_message, extract_flags, \
 #     int_val, bool_val
-from src.chooseFrames import get_log_file, CLIsetUP, create_mesh_by_ODM, run_cloudcompare
+from chooseFrames import get_log_file, CLIsetUP, create_mesh_by_ODM, run_cloudcompare
 
 signal.signal(signal.SIGINT, signal.SIG_DFL)  # Reset SIGINT signal handling to default
 
 
 
 
+def check_docker_running():
+    try:
+        # Try to run a simple Docker command to check if Docker is running
+        result = subprocess.run(['docker', 'info'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        # Check if the command was successful
+        if result.returncode != 0:
+            print("Error: Docker is not running. Please start Docker and try again.")
+            return False
+        else:
+            print("Docker is running.")
+            return True
+    except FileNotFoundError:
+        print("Error: Docker is not installed or not found in PATH.")
+        return False
+
+def start_docker_on_mac():
+    try:
+        subprocess.run(['open', '/Applications/Docker.app'], check=True)
+        print("Starting Docker on macOS...")
+    except subprocess.CalledProcessError:
+        print("Failed to start Docker on macOS. Please start it manually.")
+
+def start_docker_on_windows():
+    try:
+        subprocess.run(['start', '/B', 'Docker Desktop'], shell=True)
+        print("Starting Docker on Windows...")
+    except subprocess.CalledProcessError:
+        print("Failed to start Docker on Windows. Please start it manually.")
+
+def ensure_docker_running():
+    if not check_docker_running():
+        if sys.platform == "darwin":  # macOS
+            start_docker_on_mac()
+        elif sys.platform == "win32":  # Windows
+            start_docker_on_windows()
+
+        # After attempting to start Docker, check again
+        if not check_docker_running():
+            print("Docker is still not running. Exiting program.")
+            sys.exit(1)
+
 
 user_introduction_option = ""
+
+def help():
+    help_text = """
+        Video 2 Mesh CLI Tool
+
+        This command-line tool allows you to process images from videos and create 3D mesh models. Below are the available commands and their descriptions:
+
+        Available Commands:
+
+        -full_process: 
+            Converts two video files into one mesh model. This process involves extracting frames from the videos,
+            creating meshes for each video, and then merging them into a single mesh model.
+
+        -video2images:
+            Extracts the best frames from a video to create a mesh model. You can configure parameters like skip and threshold
+            to control how frames are selected.
+
+        -create_mesh:
+            Creates a mesh model from a set of frames located in a specified directory. The directory structure should follow
+            a specific format, where images are placed inside a 'project/images' folder.
+
+        -merge:
+            Merges two existing mesh models into one. You need to provide the paths to the two mesh models that you want to merge.
+
+        Usage:
+        1. Run the tool and select the desired command.
+        2. Follow the prompts to input video paths, configure parameters, or provide mesh paths as needed.
+        3. The tool will guide you through the process and display relevant information and progress.
+
+        Examples:
+        - To process two videos into a single mesh model:
+          Enter: -full_process
+
+        - To extract frames from a video and prepare them for mesh creation:
+          Enter: -video2images
+
+        - To create a mesh from existing frames:
+          Enter: -create_mesh
+
+        - To merge two mesh models:
+          Enter: -merge
+
+        Additional Notes:
+        - Use valid paths when prompted. Ensure that the video files, images, and meshes are located in the specified directories.
+        - If you wish to change default parameters like 'skip' and 'threshold', you can do so during the process.
+        - For further assistance, refer to the comments in the source code or consult the project documentation.
+
+        """
+    print(help_text)
+    print("Press Enter to continue to go back to the main menu.")
+    input()
+    main_menu()
 
 def welcome_message():
     welcome_message = "This is a command-line tool to process images from videos.\n"\
@@ -28,7 +124,8 @@ def welcome_message():
                                "-full_process       for converting 2 video files into one messh model.\n"\
                                "-video2images       for getting the best frames from the video to create mesh.\n"\
                                "-create_mesh        creat mesh model form sets of frames.\n"\
-                               "-merge              to merge 2 meshes into one mesh.\n"
+                               "-merge              to merge 2 meshes into one mesh.\n" \
+                               "-help               to get help"
 
 
     init(autoreset=True)
@@ -42,17 +139,34 @@ def main_menu():
                                "-full_process       for converting 2 video files into one messh model.\n" \
                                "-video2images       for getting the best frames from the video to create mesh.\n" \
                                "-create_mesh        creat mesh model form sets of frames.\n" \
-                               "-merge              to merge 2 meshes into one mesh.\n"
+                               "-merge              to merge 2 meshes into one mesh.\n"\
+                               "-help               to get help\n"\
+                               "-exit              exit video 2 mesh\n"
     user_input = input(user_introduction_option)
-    if user_input == "-full_process":
-        print("full_process")
-        full_process()
-    elif user_input == "-video2images":
-        video2images()
-    elif user_input == "-create_mesh":
-        create_mesh()
-    elif user_input == "-merge" or "merge":
-        merge()
+    # got_input = False
+    while True:
+        if user_input == ("-full_process" or "full_process"):
+            print("full_process")
+            full_process()
+            break
+        elif user_input == ("-video2images" or "video2images"):
+            video2images()
+            break
+        elif user_input == ("-create_mesh" or "create_mesh"):
+            create_mesh()
+            break
+        elif user_input == ("-merge" or "merge"):
+            merge()
+            break
+        elif user_input == ("-help" or "help"):
+            help()
+            break
+        elif user_input == "-exit":
+            print("good bye.")
+            sys.exit()
+        print("incorrect input. try again:")
+        user_input = input(user_introduction_option)
+
 
 
 def full_process():
@@ -107,12 +221,12 @@ def full_process():
     for video_path in paths:
         dest_path_per_video = dest_path+f"/v{i}"
         os.makedirs(dest_path_per_video)
-        get_log_file(True, video_path, dest_path_per_video, "png",
+        get_log_file(setup,True, video_path, dest_path_per_video, "png",
                      5, 100, 100, 100,False)
         create_mesh_by_ODM(dest_path_per_video)
         i += 1
-    mesh1_path = paths[0]+"/v1/project/odm_texturing_25d/odm_textured_model_geo.obj"
-    mesh2_path = paths[1] + "/v2/project/odm_texturing_25d/odm_textured_model_geo.obj"
+    mesh1_path = dest_path + "/v1/project/odm_texturing_25d/odm_textured_model_geo.obj"
+    mesh2_path = dest_path + "/v2/project/odm_texturing_25d/odm_textured_model_geo.obj"
     run_cloudcompare(mesh1_path,mesh2_path)
     # Placeholder for next steps
     print("Full process completed.")
@@ -123,6 +237,7 @@ def video2images():
     # Adding first video path
     video1_path = input("Enter the path of the first video: ")
     video1_path = convert_window_path(video1_path)
+    setup = CLIsetUP()
     adding_path1_successfully = setup.add_video_path(video1_path)
 
     if adding_path1_successfully:
@@ -162,11 +277,11 @@ def video2images():
         for video_path in paths:
             dest_path_per_video = dest_path + f"/v{i}"
             os.makedirs(dest_path_per_video)
-            get_log_file(True, video_path, dest_path_per_video, "png",
+            get_log_file(setup,True, video_path, dest_path_per_video, "png",
                          5, 100, 100, 100, False)
 
 def create_mesh():
-    video1_path = input("Enter the path of the first video: ")
+    video1_path = input("Enter the path of images folder: ")
     adding_path1_successfully, directory_path = is_vaid_path_for_ODM(video1_path)
     if adding_path1_successfully:
         print(f"{video1_path} has been added successfully.")
@@ -184,14 +299,14 @@ def merge():
     legal_path1 = False
     legal_path2 = False
     while not legal_path1:
-        mesh_path1 = input("Enter the path of the first video: ")
+        mesh_path1 = input("Enter the path of the first mesh: ")
         convert_window_path(mesh_path1)
         if os.path.exists(mesh_path1):
             legal_path1 = True
         else:
             __print_invalid_path()
     while not legal_path2:
-        mesh_path2 = input("Enter the path of the second")
+        mesh_path2 = input("Enter the path of the second: ")
         convert_window_path(mesh_path2)
         if os.path.exists(mesh_path2):
             legal_path2 = True
@@ -274,21 +389,14 @@ def path_contains_images(directory_path: str):
     return False
 
 def cli_engine():
-    welcome_message()
-    main_menu()
-    # try:
-    #     while True:
-    #         command_input = input(cli_message)
-    #         if command_input in exit_flags:
-    #             print("Bye Bye...")
-    #             sys.exit(0)
-    #         # user_input = UserInput(command_input)
-    #         if user_input.help:
-    #             continue
-    # except EOFError as e:
-    #     print("\nEnd of input received. Exiting.")
+    while True:
+        welcome_message()
+        main_menu()
+        print("")
+
 
 if __name__ == '__main__':
+    ensure_docker_running()
 
     cli_engine()
 
