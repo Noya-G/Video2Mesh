@@ -79,6 +79,5 @@ Help: Displays help information and instructions for using the tool.
 
 The tool checks if Docker is running before performing mesh processing tasks. If Docker is not running, the tool will attempt to start Docker automatically on macOS or Windows. If Docker fails to start, the tool will exit.
 ## Troubleshooting
-
-## Docker Issues: Ensure Docker is installed and running. The tool will attempt to start Docker automatically, but manual intervention may be required.
-File Paths: Make sure to use valid paths and ensure that the video files, images, and mesh models are correctly organized
+- Docker Issues:Ensure Docker is installed and running. The tool will attempt to start Docker automatically, but manual intervention may be required.
+- File Paths: Make sure to use valid paths and ensure that the video files, images, and mesh models are correctly organized
