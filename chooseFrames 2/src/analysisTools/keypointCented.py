@@ -198,6 +198,27 @@ def process_frames(frames, window_size=10):
     return result
 
 
+
+def plot_2_images_with_data(image1,image2,data1="", data2=""):
+    plt.figure(figsize=(10, 5))
+
+    # Plot first image
+    plt.subplot(1, 2, 1)
+    plt.imshow(image1)
+    plt.title('Image 1')
+    plt.axis('off')  # Turn off axis numbers and ticks
+    plt.text(0.5, -0.1, data1, ha='center', va='top', transform=plt.gca().transAxes, fontsize=12)
+    # Plot second image
+    plt.subplot(1, 2, 2)
+    plt.imshow(image2)
+    plt.title('Image 2')
+    plt.axis('off')  # Turn off axis numbers and ticks
+
+    plt.text(0.5, -0.1, data2, ha='center', va='top', transform=plt.gca().transAxes, fontsize=12)
+
+    plt.show()
+
+
 def process_frames2(frames, window_size=10, threshold=0.1):
     result = []
     i = 0
@@ -212,10 +233,22 @@ def process_frames2(frames, window_size=10, threshold=0.1):
         # Calculate the min and max values
         min_val = min(values)
         max_val = max(values)
+        avg =sum(values) / len(values)
+
+        top = directions['top']
+        bottom = directions['bottom']
+
+
+
 
         # Calculate the range of values as a percentage of the max value
+        if (top+bottom) <10:
+            continue
         if (min_val + max_val) < 15:
              continue
+        if avg > 70:
+            continue
+
 
         # If the values are not within the threshold, add the frame to the result
         result.append((frame1_index, frame2_index, directions))
@@ -748,3 +781,5 @@ def detect_objects_shrinking_bounding_boxes(img1, img2, cascade_path='haarcascad
         return 'Objects are getting larger'
     else:
         return 'No significant size change'
+
+
