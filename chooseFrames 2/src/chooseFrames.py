@@ -6,22 +6,40 @@ import cv2
 import sys
 import time
 import numpy as np
+import trimesh
 from LogMannager import create_new_folder
 from eanalyzeTool import *
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from icecream import ic
-from src.analysisTools.keypointCented import keypoint_movement_towards_center
+from src.analysisTools.keypointCented import *
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
+import glob
+import shutil
 
+from PIL import Image, ImageDraw, ImageFont
+def add_text_to_images(images, texts):
+    images_with_text = []
+    for img, text in zip(images, texts):
+        # Create a drawable image
+        draw = ImageDraw.Draw(img)
+        # Define font and size
+        font = ImageFont.load_default()
+        # Define text position
+        text_position = (10, 10)  # You can adjust the position
+        # Add text to the image
+        draw.text(text_position, str(text), font=font, fill="white")
+        # Save the image with text
+        images_with_text.append(img)
+    return images_with_text
 class CLIsetUP:
     __skip : int
     __threshhold : int
     __debug_mood : bool
     __root_output_location : str
     # __videos_paths : List[str] = []
-    def __init__(self, skip = 10, threshold = 20, Debug_mood = False):
+    def __init__(self, skip:int = 10, threshold: int= 20, Debug_mood:bool = False):
         self.__skip = skip
         self.__threshold = threshold
         self.__debug_mood = Debug_mood
@@ -66,7 +84,7 @@ class CLIsetUP:
         return self.__skip
 
     def set_threshold(self,threshhold):
-        self.__threshhold = threshhold
+        self.__threshold = threshhold
 
     def get_threshold(self):
         return self.__threshold
@@ -95,10 +113,10 @@ class CLIsetUP:
         return  potentioal_path
 
 
-
-
-SKIP = 20 # Number of frames to skip
-THRESHOLD = 10
+RESET = "\033[0m"
+BLUE = "\033[34m"
+skip = 20 # Number of frames to skip
+threshold = 10
 def extract_frames(video_path, skip=1):
     # Open the video file
     video_capture = cv2.VideoCapture(video_path)
@@ -110,13 +128,14 @@ def extract_frames(video_path, skip=1):
     frame_count = 0
 
     for i in tqdm(range(0, total_frames),
-                       total=total_frames,
-                       desc="Extracting Frames", ncols=75):
+                  desc=f"extract one frame in {skip} frames",
+                  ascii=False, ncols=100):
         success, frame = video_capture.read()
         if not success:
             break
-        if i % SKIP == 0:
+        if i % skip == 0:
             frames.append(frame)
+
 
     # Release the video capture object
     video_capture.release()
@@ -130,24 +149,21 @@ def estimate_camera_movement(frame1, frame2):
     gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
     gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
 
-    # Feature detection and matching (using SIFT)
-    sift = cv2.SIFT_create()
-    keypoints1, descriptors1 = sift.detectAndCompute(gray1, None)
-    keypoints2, descriptors2 = sift.detectAndCompute(gray2, None)
+    # Feature detection and matching (using ORB)
+    orb = cv2.ORB_create()
+    keypoints1, descriptors1 = orb.detectAndCompute(gray1, None)
+    keypoints2, descriptors2 = orb.detectAndCompute(gray2, None)
 
     # Match keypoints between the frames
-    matcher = cv2.BFMatcher()
-    matches = matcher.knnMatch(descriptors1, descriptors2, k=2)
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    matches = matcher.match(descriptors1, descriptors2)
 
-    # Apply ratio test to select good matches
-    good_matches = []
-    for m, n in matches:
-        if m.distance < 0.75 * n.distance:
-            good_matches.append(m)
+    # Sort matches by distance (best matches first)
+    matches = sorted(matches, key=lambda x: x.distance)
 
     # Estimate transformation (homography)
-    src_pts = np.float32([keypoints1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-    dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+    src_pts = np.float32([keypoints1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+    dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
     H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
     # Decompose transformation
@@ -179,16 +195,49 @@ def movement_estimator(frames):
                                                    ascii=False, ncols=100):
             translation_distance, theta = future.result()
             estimator.append((start_index, end_index, translation_distance, theta))  # Include the frame indexes in the results
-        print(f"movement estimator finish successfully: {translation_distance}, theta: {theta}")
+        # print(f"movement estimator finish successfully: {translation_distance}, theta: {theta}")
     return estimator
 
 
+def find_latest_merged_file(directory_path):
+    # Search for files in the directory that contain the word "MERGED" in the filename
+    search_pattern = os.path.join(directory_path, "*MERGED*")
+    merged_files = glob.glob(search_pattern)
+
+    if not merged_files:
+        return None  # No matching files found
+
+    # Find the most recently modified file among the matched files
+    latest_file = max(merged_files, key=os.path.getmtime)
+
+    return latest_file
 def run_cloudcompare(path1: str, path2: str):
+    # Load the meshes
+    mesh1 = trimesh.load(path1)
+    mesh2 = trimesh.load(path2)
+
+    # Compute scale factor
+    mesh1_scale = mesh1.scale
+    mesh2_scale = mesh2.scale
+    scale_factor = mesh1_scale / mesh2_scale
+
+    # Apply scale to mesh2
+    mesh2.apply_scale(scale_factor)
+
+    # Recompute normals for mesh2
+    mesh2.dump(concatenate=True).fix_normals()
+
+    # Export the rescaled mesh
+    directory_path_mesh2 = os.path.dirname(path2)
+    mesh2_rescale_path = os.path.join(directory_path_mesh2, "odm_rescaled_model_geo.obj")
+    mesh2.export(mesh2_rescale_path)
+
+    # Prepare the command string for CloudCompare
     command_str = (
         "/Applications/CloudCompare.app/Contents/MacOS/CloudCompare -SILENT \\\n"
         f"-O {path1} \\\n"
-        f"-O {path2} \\\n"
-        "-ICP -MIN_ERROR_DIFF 2 -ITER 200 -OVERLAP 35 \\\n"
+        f"-O {mesh2_rescale_path} \\\n"
+        "-ICP -MIN_ERROR_DIFF 3 -ITER 200 -OVERLAP 10 \\\n"
         "-MERGE_MESHES"
     )
 
@@ -211,8 +260,25 @@ def run_cloudcompare(path1: str, path2: str):
     # Check the exit code
     if process.returncode == 0:
         print("CloudCompare command executed successfully.")
+        merge_file_directory = os.path.dirname(path1)
+        merge_file_path = find_latest_merged_file(merge_file_directory)
+
+        if merge_file_path:
+            name = os.path.basename(merge_file_path)
+            main_file_directory = os.path.dirname(merge_file_directory)
+            merge_file_saved_location = os.path.join(main_file_directory, name)
+
+            # Move the merged file to the main directory
+            shutil.move(merge_file_path, merge_file_saved_location)
+            print(f"\n{BLUE}Merged file saved at:{RESET} {merge_file_saved_location}")
+            print(f"{BLUE}under the name:{RESET} {name} ")
+        else:
+            print("No merged file found.")
     else:
         print(f"An error occurred. Exit code: {process.returncode}")
+
+
+
 
 
 def calculate_significance(frames, indexes):
@@ -232,7 +298,7 @@ def select_frames_with_dynamic_programming(significance, limit):
     n = len(significance)
     dp = [0] * n
     for i in range(n):
-        dp[i] = max(dp[j] for j in range(i) if significance[i][1] - significance[j][1] > THRESHOLD) + 1
+        dp[i] = max(dp[j] for j in range(i) if significance[i][1] - significance[j][1] > threshold) + 1
 
     # Find the index of the last frame in the selected sequence
     max_index = max(range(n), key=lambda x: dp[x])
@@ -241,7 +307,7 @@ def select_frames_with_dynamic_programming(significance, limit):
     selected_indexes = []
     while max_index >= 0 and len(selected_indexes) < limit:
         selected_indexes.append(significance[max_index][0])
-        max_index = max(j for j in range(max_index) if dp[j] == dp[max_index] - 1 and significance[max_index][1] - significance[j][1] > THRESHOLD)
+        max_index = max(j for j in range(max_index) if dp[j] == dp[max_index] - 1 and significance[max_index][1] - significance[j][1] > threshold)
 
     # Return the selected frames with their indexes
     return [(index, significance[index][1]) for index in selected_indexes]
@@ -259,12 +325,11 @@ def select_frames_with_indexes(frames, indexes, s):
 def select_frames(movement):
     selected_frames = []
     for start_index, end_index, translation_distance, theta in tqdm(movement,
-                                                                    desc=f"select frames using THRESHOLD {THRESHOLD} processing",
+                                                                    desc=f"select frames using THRESHOLD {threshold} processing",
                                                                     ascii=False, ncols=100):
-        if (translation_distance >THRESHOLD
-                or abs(theta) > THRESHOLD):
+        if (translation_distance >10):
             selected_frames.append(start_index)
-    print(f"select frames using THRESHOLD {THRESHOLD} fineshed processing sucssesfuly")
+    # print(f"select frames using THRESHOLD {THRESHOLD} fineshed processing sucssesfuly")
     return selected_frames
 
 
@@ -353,7 +418,49 @@ def get_git_branch():
         print(f"Error getting git branch: {e}")
         return None
 
+def detect_vertical_movement(frame1, frame2, threshold=10):
+    # Convert images to grayscale
+    image1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
+    image2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
 
+    # Initialize ORB detector
+    orb = cv2.ORB_create()
+
+    # Find keypoints and descriptors
+    keypoints1, descriptors1 = orb.detectAndCompute(image1, None)
+    keypoints2, descriptors2 = orb.detectAndCompute(image2, None)
+
+    # Initialize BFMatcher
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+    # Match descriptors
+    matches = bf.match(descriptors1, descriptors2)
+
+    # Extract matched keypoints
+    matched_keypoints1 = np.float32([keypoints1[m.queryIdx].pt for m in matches]).reshape(-1, 2)
+    matched_keypoints2 = np.float32([keypoints2[m.trainIdx].pt for m in matches]).reshape(-1, 2)
+
+    # Calculate movement along the Y-axis
+    vertical_movement = matched_keypoints2[:, 1] - matched_keypoints1[:, 1]
+    mean_vertical_movement = np.mean(vertical_movement)
+
+    # Check if the movement is above the threshold (indicating takeoff or landing)
+    return abs(mean_vertical_movement) > threshold
+
+def filter_frames(frames, indexes, threshold=10):
+    filtered_frames = []
+    filtered_indexes = []
+
+    for i in tqdm(range(len(frames) - 1), desc="Filtering frames", ascii=False, ncols=100):
+        frame1 = frames[i]
+        frame2 = frames[i + 1]
+
+        if not detect_vertical_movement(frame1, frame2, threshold):
+            filtered_frames.append(frame2)
+            if i + 1 < len(indexes):
+                filtered_indexes.append(indexes[i + 1])
+
+    return filtered_frames, filtered_indexes
 
 def get_git_commit_info():
     try:
@@ -424,9 +531,10 @@ def movement_direction(frames, indexes):
                   ascii=False, ncols=100):
         index1, frame1 = framesWI[i]
         index2, frame2 = framesWI[i + 1]
-        direc = keypoint_movement_towards_center(frame1, frame2)
+        direc = calculate_region_overlaps(frame1, frame2)
         frames_direction.append((index1, index2, direc))
     return frames_direction
+
 
 def longest_subarray_with_value(lst):
 
@@ -480,8 +588,6 @@ def largest_interval_subset(original_list, size=100):
     if len(original_list) <= 100:
         return original_list
 
-    ic(len(original_list))
-    ic(size)
     step = len(original_list) // size  # Calculate step size for subset
 
     if step == 0:  # If original list is smaller than size 100
@@ -579,15 +685,43 @@ def select_frames_with_most_significant_movements(selected_frames, selected_fram
 
     return selected_frames, selected_indexes
 
-def get_log_file(cond,video_path, destPath,format_type = "png" ,
-                 rate=SKIP,count=100,Limit=100,precent =100, preLog=False):
+
+def remove_low_quality_images(images, blur_threshold=100.0, low_exposure_threshold=50, high_exposure_threshold=200):
+    """Remove low-quality images based on blur and exposure."""
+    good_quality_images = []
+
+    for image in images:
+        if not is_blurry(image, blur_threshold) and not is_over_or_under_exposed(image, low_exposure_threshold,
+                                                                                 high_exposure_threshold):
+            good_quality_images.append(image)
+
+    return good_quality_images
+
+
+def extract_unique_integers(tuples_list):
+    result = []
+
+    for i, (start, end, _) in enumerate(tuples_list):
+        # Always add the start if it's not already in the list
+        if not result or result[-1] != start:
+            result.append(start)
+
+        # Only add the end if it's not the start of the next tuple
+        if i == len(tuples_list) - 1 or end != tuples_list[i + 1][0]:
+            result.append(end)
+
+    return result
+
+def get_log_file(cli_setup: CLIsetUP, cond, video_path, destPath, format_type = "png",
+                 rate=skip, count=100, Limit=100, precent =100, preLog=False):
     # output_payh =
     video_name = video_path.split("/")[-1]
-    SKIP = rate
+    SKIP = cli_setup.get_skip()
     video_path = video_path
     video_name = last_six_chars = video_path[-6:]
     directory = os.path.dirname(video_path)
     new_path = destPath
+    threshold = cli_setup.get_threshold()
     if cond is True:
         log_file_path = os.path.join(destPath, "chosen_frames.log")
         logging.basicConfig(filename=log_file_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -611,11 +745,11 @@ def get_log_file(cond,video_path, destPath,format_type = "png" ,
         else:
             logging.info("Branch information not available")
         logging.info(f"SKIP: {SKIP}")
-        logging.info(f"THRESHOLD: {THRESHOLD}")
+        logging.info(f"THRESHOLD: {threshold}")
         logging.info(f"Video name: {video_name}")
 
     # Extract frames from the video
-    all_frames = extract_frames(video_path)
+    all_frames = extract_frames(video_path,SKIP)
     if cond is True:
         logging.info(f"Total frames extracted: {len(all_frames)}")
 
@@ -655,12 +789,13 @@ def get_log_file(cond,video_path, destPath,format_type = "png" ,
         # Select frames with significant camera movement
         selected_frames_indexes = select_frames(estimator)
         frames_indexes = select_frames(estimator)
-        frames_direction = movement_direction(all_frames, frames_indexes)
+        frames_direction = movement_direction(all_frames, frames_indexes[::6])
+        # frames_direction = filter_frames(all_frames, selected_frames_indexes)
 
     if cond is True:
         # estimator = movement_estimator(all_frames)
         selected_frames_indexes = select_frames(estimator)
-        print(selected_frames_indexes)
+        # print(selected_frames_indexes)
         if selected_frames_indexes is None:
             selected_frames_indexes = select_frames(estimator)
         logging.info(f"Total selected frames: {len(selected_frames_indexes)}")
@@ -668,6 +803,10 @@ def get_log_file(cond,video_path, destPath,format_type = "png" ,
 
     # Get selected frames
     selected_frames = get_selected_frames(selected_frames_indexes, all_frames)
+
+    # print(f"{len(selected_frames)}")
+
+    selected_frames = remove_low_quality_images(selected_frames)
 
     # Save selected frames as images
     # save_frames_as_photos(selected_frames, new_path)
@@ -687,28 +826,12 @@ def get_log_file(cond,video_path, destPath,format_type = "png" ,
         plot_theta_zoom_out(expected_theta, estimator[:len(selected_frames_indexes) - 1], selected_frames_indexes,
                             new_path)
 
-    longestSubarray = longest_subarray_with_value(frames_direction)
+    # longestSubarray = longest_subarray_with_value(frames_direction)
+    longestSubarray = process_frames2(frames_direction)
+    frame_indexes_after_detection = extract_unique_integers(longestSubarray)
+    # firstGoodFrame = longestSubarray[-1][1]
 
-    firstGoodFrame = longestSubarray[-1][1]
-    if (firstGoodFrame < selected_frames_indexes[math.floor(len(selected_frames_indexes) / 2)]):
-        selected_frames_indexes = selected_frames_indexes[selected_frames_indexes.index(firstGoodFrame):]
-        if cond is True:
-            logging.info(f"selected frames after cutting: {selected_frames_indexes}")
-            logging.info(f"total selected frames after cutting: {len(selected_frames_indexes)}")
-        selected_frames = get_selected_frames(selected_frames_indexes, all_frames)
-
-    if (firstGoodFrame > selected_frames_indexes[math.floor(len(selected_frames_indexes) / 2)]):
-        selected_frames_indexes = selected_frames_indexes[:selected_frames_indexes.index(firstGoodFrame)]
-        if cond is True:
-            logging.debug(f"selected frames after cutting: {selected_frames_indexes}")
-            logging.debug(f"total selected frames after cutting: {len(selected_frames_indexes)}")
-        selected_frames = get_selected_frames(selected_frames_indexes, all_frames)
-
-    # estimator2 = movement_estimator(selected_frames)
-    selected_indexes = largest_interval_subset(selected_frames_indexes,count)
-    if cond is True:
-        logging.info(f"final selected frames indexes: {selected_frames_indexes}")
-    selected_frames = get_selected_frames(selected_indexes, all_frames)
+    selected_frames = get_selected_frames(frame_indexes_after_detection, all_frames)
     final_path_target = f"{destPath}/project/images"
     save_frames_as_photos(selected_frames, final_path_target)
     logging.info("start building mesh using ODM")
