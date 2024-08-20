@@ -32,12 +32,8 @@ docker --version
 ```
 
 ## Running the Script
-Navigate to the Script Directory:
-Open a terminal or command prompt and navigate to the directory containing the CLITool.py script:
-```bash
-cd /path/to/chooseFrames 2/ 
-```
-Replace /path/to/chooseFrames/2 with the actual path to the chooseFrames 2 directory on your system.
+
+Replace /path/to/chooseFrames/2 with the actual path to the src directory on your system.
 Run the Script:
 Execute the script using Python:
 ```bash
