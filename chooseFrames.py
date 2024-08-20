@@ -11,7 +11,7 @@ from LogMannager import create_new_folder
 from eanalyzeTool import *
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from icecream import ic
+
 from src.analysisTools.keypointCented import *
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
